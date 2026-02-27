@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: myapp-environments
+  namespace: argocd
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/HardsonTsi/argo-test.git
+        revision: master
+        directories:
+          - path: env/*
+  template:
+    metadata:
+      name: myapp-{{path.basename}}
+    spec:
+      project: myapp
+      source:
+        repoURL: https://github.com/HardsonTsi/argo-test.git
+        targetRevision: master
+        path: charts/myapp
+        helm:
+          valueFiles:
+            - values.yaml
+            - ../../env/{{path.basename}}/values.yaml
+            - ../../env/{{path.basename}}/feature-flags.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: myapp-{{path.basename}}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

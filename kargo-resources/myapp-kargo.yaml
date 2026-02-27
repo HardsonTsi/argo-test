@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kargo-myapp
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  name: myapp
+  namespace: kargo-myapp
+---
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: myapp-gitops-repo
+  namespace: kargo-myapp
+  labels:
+    kargo.akuity.io/cred-type: git
+stringData:
+  repoURL: ${GITOPS_REPO_URL}
+  username: ${GITHUB_USERNAME}
+  password: ${GITHUB_PAT}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: myapp
+  namespace: kargo-myapp
+spec:
+  subscriptions:
+    - image:
+        repoURL: ${IMAGE_REPO}
+        constraint: ^1.26.0
+        discoveryLimit: 5
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: PromotionTask
+metadata:
+  name: myapp-promo
+  namespace: kargo-myapp
+spec:
+  vars:
+    - name: gitopsRepo
+      value: ${GITOPS_REPO_URL}
+    - name: imageRepo
+      value: ${IMAGE_REPO}
+  steps:
+    - uses: git-clone
+      config:
+        repoURL: ${{ vars.gitopsRepo }}
+        checkout:
+          - branch: master
+            path: ./repo
+    - uses: yaml-update
+      as: update
+      config:
+        path: ./repo/env/${{ ctx.stage }}/values.yaml
+        updates:
+          - key: image.tag
+            value: ${{ imageFrom(vars.imageRepo).Tag }}
+    - uses: git-commit
+      as: commit
+      config:
+        path: ./repo
+        message: ${{ task.outputs.update.commitMessage }}
+    - uses: git-push
+      config:
+        path: ./repo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: dev
+  namespace: kargo-myapp
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: myapp
+      sources:
+        direct: true
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: myapp-promo
+          as: promo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: staging
+  namespace: kargo-myapp
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: myapp
+      sources:
+        stages:
+          - dev
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: myapp-promo
+          as: promo
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: prod
+  namespace: kargo-myapp
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: myapp
+      sources:
+        stages:
+          - staging
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: myapp-promo
+          as: promo
+
